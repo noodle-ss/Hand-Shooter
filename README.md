@@ -9,9 +9,7 @@ A webcam-powered shooting game built entirely with vanilla JavaScript, Canvas 2D
 ## Features
 
 - **Hand Tracking** — Real-time 21-point hand landmark detection via MediaPipe
-- **Finger-Gun Detection** — Validates gun pose (index extended, others curled) before firing
-- **One-Euro Filter** — Buttery-smooth, jitter-free crosshair with zero-latency fast moves
-- **3D Pointing** — Uses world landmarks to detect when you're pointing at the camera
+- **Finger-Gun Detection** — Validates hand before firing
 - **HTML-in-Canvas** — Fake browser windows rendered via SVG `foreignObject`
 - **Physics Engine** — Gravity, drag, angular momentum, hit impulse
 - **Glass Shatter** — Missed shots shatter the screen; fragments pile up at the bottom
@@ -64,7 +62,7 @@ git push -u origin main
 
 # 2. Enable Pages
 # Go to Settings → Pages → Source: Deploy from branch → main → / (root)
-# Your site will be live at https://YOUR_USERNAME.github.io/Hand-Shooter/
+# Your site will be live at https://noodle-ss.github.io/Hand-Shooter/
 ```
 
 > **Note**: GitHub Pages serves over HTTPS, which is required for `getUserMedia` (webcam access). It works out of the box!
