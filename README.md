@@ -1,29 +1,29 @@
-# 🔫 Hand Shooter
+# 🔫 Hand Canvas Shooter
 
 **Webcam gesture game — point your finger gun and shoot browser windows!**
 
 A webcam-powered shooting game built entirely with vanilla JavaScript, Canvas 2D, and MediaPipe Hands. Browser windows float across the screen as targets — make a finger-gun pose and bend your thumb to shoot them!
 
-🎮 **[Live Demo](https://YOUR_USERNAME.github.io/Hand-Shooter/)** ← *update with your GitHub username*
+🎮 **[Live Demo](https://noodle-ss.github.io/Hand-Shooter/)**
 
 ## Features
 
-- **Hand Tracking** — Real-time 21-point hand landmark detection via MediaPipe
-- **Finger-Gun Detection** — Validates hand before firing
+- **Hand Tracking & Filtering** — Real-time 21-point MediaPipe detection with Kalman-style aim smoothing and velocity damping
+- **Robust Gesture Detection** — Finger-gun validation with anti-stuck release mechanisms and fire-rate limiting
 - **HTML-in-Canvas** — Fake browser windows rendered via SVG `foreignObject`
-- **Physics Engine** — Gravity, drag, angular momentum, hit impulse
-- **Glass Shatter** — Missed shots shatter the screen; fragments pile up at the bottom
-- **HUD Overlay** — Status bar, crosshair, combo counter, accuracy tracking
+- **Physics Engine** — Gravity, drag, angular momentum, hit impulse, and 2D collision
+- **Dynamic Shatter** — Missed shots punch blank holes through the screen; severed fragments fall and pile up realistically
+- **HUD Overlay** — Status bar, reactive crosshair, combo counter, and accuracy tracking
 - **Chaos Mode** — Press `C` for maximum window spawning!
 
 ## Tech Stack
 
 | Tech | Purpose |
 |------|---------|
-| MediaPipe Tasks Vision | Hand landmark detection (2D + 3D world) |
+| MediaPipe Tasks Vision | Hand landmark detection (2D + 3D world z-depth) |
 | SVG foreignObject | HTML-in-Canvas rendering |
 | Canvas 2D API | Drawing / compositing |
-| One-Euro Filter | Jitter-free aim smoothing |
+| Advanced Filtering | Median pre-filter + velocity-based prediction for jitter-free aim |
 | getUserMedia | Webcam access |
 | requestAnimationFrame | 60fps game loop |
 
@@ -48,25 +48,6 @@ npx -y serve .
 
 Then open `http://localhost:8080` in Chrome.
 
-## GitHub Pages Deployment
-
-This project works **directly on GitHub Pages** — no build step needed!
-
-```bash
-# 1. Push to GitHub
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/YOUR_USERNAME/Hand-Shooter.git
-git push -u origin main
-
-# 2. Enable Pages
-# Go to Settings → Pages → Source: Deploy from branch → main → / (root)
-# Your site will be live at https://noodle-ss.github.io/Hand-Shooter/
-```
-
-> **Note**: GitHub Pages serves over HTTPS, which is required for `getUserMedia` (webcam access). It works out of the box!
-
 ## Controls
 
 | Key | Action |
@@ -84,22 +65,21 @@ Hand-Shooter/
 ├── src/
 │   ├── main.js            # Entry — init camera + RAF loop + FPS monitor
 │   ├── hand-tracker.js    # MediaPipe setup + landmark parsing
-│   ├── gesture.js         # One-Euro filter aim + finger-gun detection
+│   ├── gesture.js         # Aim filtering + robust finger-gun + fire cooldown
 │   ├── renderer.js        # Canvas draw loop + cached vignette
 │   ├── window-spawner.js  # HTML-in-canvas element factory
 │   ├── physics.js         # Velocity, gravity, collision
-│   ├── shatter.js         # Glass fracture + fragment piling
+│   ├── shatter.js         # Glass fracture, screen holes + fragment piling
 │   └── hud.js             # Status bar, crosshair, effects
 ├── assets/
 │   └── style.css          # Reset + canvas full-screen
 ├── index.html             # Single page — canvas fills viewport
-├── 404.html               # GitHub Pages fallback
 └── README.md
 ```
 
 ## Notes
 
-- ⚠️ **CORS**: Must use a local server or GitHub Pages, not `file://`
+- ⚠️ **CORS**: Must use a local server, not `file://`
 - ⚡ **Performance**: Window images are cached; FPS auto-adapts on slower devices
 - ◎ **Lighting**: Good lighting improves hand detection accuracy
 - ✓ **Browser**: Chrome works best; Firefox has foreignObject gaps
