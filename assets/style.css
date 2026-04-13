@@ -1,0 +1,151 @@
+/* ═══════════════════════════════════════════════════
+   Hand Canvas Shooter — Global Styles
+   ═══════════════════════════════════════════════════ */
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --color-bg:      #0a0a0f;
+  --color-accent:  #00f0ff;
+  --color-fire:    #ff3d5a;
+  --color-success: #39ff7f;
+  --color-warn:    #ffc107;
+  --color-text:    #e0e6f0;
+  --color-dim:     #5a6380;
+  --font-mono:     'JetBrains Mono', monospace;
+  --font-sans:     'Inter', system-ui, sans-serif;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+  font-family: var(--font-sans);
+  color: var(--color-text);
+}
+
+#game-canvas {
+  display: block;
+  width: 100vw; height: 100vh;
+  background: #000;
+  cursor: none;
+}
+
+/* ── Loading Overlay ────────────────────────────── */
+#loading-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, #121225 0%, #0a0a0f 70%);
+}
+
+.loader-content {
+  text-align: center;
+  animation: fadeIn 0.6s ease;
+}
+
+.loader-content h1 {
+  font-family: var(--font-mono);
+  font-size: 2.4rem; font-weight: 700; letter-spacing: 0.1em;
+  background: linear-gradient(135deg, var(--color-accent), #a78bfa, var(--color-fire));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 1.5rem;
+}
+
+.loader-content p {
+  font-family: var(--font-mono);
+  font-size: 0.85rem; color: var(--color-dim); letter-spacing: 0.05em;
+}
+
+.loader-ring {
+  width: 64px; height: 64px;
+  margin: 0 auto 2rem;
+  border: 3px solid rgba(0,240,255,0.12);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+/* ── Start Screen ───────────────────────────────── */
+#start-screen {
+  position: fixed; inset: 0; z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10,10,15,0.92);
+  backdrop-filter: blur(16px);
+}
+
+.start-content {
+  text-align: center;
+  animation: scaleIn 0.4s ease;
+}
+
+.start-content h1 {
+  font-family: var(--font-mono);
+  font-size: 3rem; font-weight: 700; letter-spacing: 0.12em;
+  background: linear-gradient(135deg, var(--color-accent), #a78bfa, var(--color-fire));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 1rem;
+}
+
+.start-content > p {
+  font-size: 1rem; color: var(--color-dim); line-height: 1.7;
+  margin-bottom: 2rem;
+}
+
+#start-btn {
+  font-family: var(--font-mono);
+  font-size: 1rem; font-weight: 700; letter-spacing: 0.15em;
+  padding: 1rem 3rem; border: none; border-radius: 8px;
+  background: linear-gradient(135deg, var(--color-accent), #6366f1);
+  color: #0a0a0f; cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 0 30px rgba(0,240,255,0.25);
+}
+
+#start-btn:hover { transform: scale(1.06); box-shadow: 0 0 50px rgba(0,240,255,0.45); }
+#start-btn:active { transform: scale(0.97); }
+
+.start-instructions {
+  display: flex; gap: 2.5rem; justify-content: center; margin-top: 2.5rem;
+}
+
+.instruction-item {
+  display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+}
+
+.instruction-icon {
+  font-size: 2rem;
+  display: flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px; border-radius: 16px;
+  background: rgba(99,102,241,0.12);
+  border: 1px solid rgba(99,102,241,0.2);
+}
+
+.instruction-item span:last-child {
+  font-size: 0.8rem; color: var(--color-dim);
+}
+
+.start-tip {
+  margin-top: 1.5rem !important;
+  font-size: 0.75rem !important;
+  color: rgba(90,99,128,0.7) !important;
+}
+
+.start-tip kbd {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(99,102,241,0.15);
+  border: 1px solid rgba(99,102,241,0.3);
+  color: #a78bfa;
+}
+
+/* ── Animations ─────────────────────────────────── */
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes fadeIn  { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
+@keyframes scaleIn { from { opacity:0; transform: scale(0.9); }       to { opacity:1; transform: scale(1); } }

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Hand Canvas Shooter — bend your thumb to fire, shatter the screen!">
+  <title>🔫 Hand Canvas Shooter</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+  <video id="webcam" autoplay playsinline style="display:none;"></video>
+
+  <!-- Loading overlay -->
+  <div id="loading-overlay">
+    <div class="loader-content">
+      <div class="loader-ring"></div>
+      <h1>🔫 HAND SHOOTER</h1>
+      <p id="loading-status">Initializing camera…</p>
+    </div>
+  </div>
+
+  <!-- Start screen -->
+  <div id="start-screen" style="display:none;">
+    <div class="start-content">
+      <h1>🔫 HAND SHOOTER</h1>
+      <p>Point your hand at the camera.<br>Bend your thumb to shoot — shatter the screen!</p>
+      <button id="start-btn">START GAME</button>
+      <div class="start-instructions">
+        <div class="instruction-item">
+          <span class="instruction-icon">✋</span>
+          <span>Show your hand</span>
+        </div>
+        <div class="instruction-item">
+          <span class="instruction-icon">👆</span>
+          <span>Aim with index finger</span>
+        </div>
+        <div class="instruction-item">
+          <span class="instruction-icon">💥</span>
+          <span>Bend thumb to fire!</span>
+        </div>
+      </div>
+      <p class="start-tip">Press <kbd>S</kbd> to toggle skeleton · <kbd>C</kbd> for chaos mode</p>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
