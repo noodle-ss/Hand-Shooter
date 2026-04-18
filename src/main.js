@@ -1,5 +1,7 @@
 // ═══════════════════════════════════════════════════
 // main.js — Entry point: init camera + RAF game loop
+// Mobile-friendly: fullscreen API, touch controls,
+// orientation handling, mobile camera constraints
 // ═══════════════════════════════════════════════════
 
 import { initHandTracker, detectHand } from './hand-tracker.js';
@@ -25,6 +27,15 @@ const loadingOverlay = document.getElementById('loading-overlay');
 const loadingStatus  = document.getElementById('loading-status');
 const startScreen    = document.getElementById('start-screen');
 const startBtn       = document.getElementById('start-btn');
+const fullscreenBtn  = document.getElementById('fullscreen-btn');
+const fsIconExpand   = document.getElementById('fs-icon-expand');
+const fsIconCompress = document.getElementById('fs-icon-compress');
+const touchControls  = document.getElementById('touch-controls');
+const chaosBtn       = document.getElementById('chaos-btn');
+const skeletonBtn    = document.getElementById('skeleton-btn');
+
+// ── Device detection ─────────────────────────────────
+const isTouchDevice = () => navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
 
 // ── Game state ───────────────────────────────────────
 const gameState = {
@@ -46,32 +57,98 @@ const gameState = {
   spawnTimer:         0
 };
 
-// ── Canvas resize — honours devicePixelRatio for crisp rendering ──────
+// ── Canvas resize ────────────────────────────────────
+// Uses dvh (dynamic viewport height) units to handle address bar collapse on mobile
 function resizeCanvas() {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2); // cap at 2x to save memory on HiDPI mobile
   const w   = window.innerWidth;
   const h   = window.innerHeight;
 
-  // Physical pixels
   canvas.width  = Math.round(w * dpr);
   canvas.height = Math.round(h * dpr);
 
-  // CSS size stays at logical pixels
   canvas.style.width  = w + 'px';
   canvas.style.height = h + 'px';
 
-  // Scale context so all drawing uses logical pixel coords
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener('resize', resizeCanvas);
+// Also fire on orientation change (mobile) — add small delay for browser to settle
+window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 120));
 resizeCanvas();
+
+// ── Fullscreen API ───────────────────────────────────
+// Works cross-browser including iOS Safari (which uses a different API)
+
+function isFullscreen() {
+  return !!(
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    document.mozFullScreenElement
+  );
+}
+
+async function enterFullscreen() {
+  const el = document.documentElement;
+  try {
+    if (el.requestFullscreen)              await el.requestFullscreen({ navigationUI: 'hide' });
+    else if (el.webkitRequestFullscreen)   await el.webkitRequestFullscreen();
+    else if (el.mozRequestFullScreen)      await el.mozRequestFullScreen();
+  } catch (e) {
+    // iOS Safari doesn't support fullscreen API — gracefully ignore
+    console.warn('Fullscreen not available:', e.message);
+  }
+}
+
+async function exitFullscreen() {
+  try {
+    if (document.exitFullscreen)              await document.exitFullscreen();
+    else if (document.webkitExitFullscreen)   await document.webkitExitFullscreen();
+    else if (document.mozCancelFullScreen)    await document.mozCancelFullScreen();
+  } catch (e) {
+    console.warn('Exit fullscreen failed:', e.message);
+  }
+}
+
+function updateFullscreenIcon() {
+  const full = isFullscreen();
+  fsIconExpand.style.display   = full ? 'none'  : 'block';
+  fsIconCompress.style.display = full ? 'block' : 'none';
+}
+
+['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange'].forEach(evt =>
+  document.addEventListener(evt, updateFullscreenIcon)
+);
+
+fullscreenBtn.addEventListener('click', () => {
+  isFullscreen() ? exitFullscreen() : enterFullscreen();
+});
+
+// ── Orientation lock (where supported) ──────────────
+// Tries to lock to portrait on mobile; silently ignores on desktop/unsupported
+async function tryLockOrientation() {
+  try {
+    if (screen.orientation && screen.orientation.lock) {
+      await screen.orientation.lock('portrait');
+    }
+  } catch (e) {
+    // Not supported or not allowed — no problem, game still works landscape
+  }
+}
 
 // ── Camera ───────────────────────────────────────────
 async function initCamera() {
   loadingStatus.textContent = 'Requesting camera access…';
   try {
+    // On mobile, use lower resolution for performance; desktop gets 1080p
+    const isMobile = isTouchDevice();
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: {
+        facingMode: 'user',                       // front/selfie camera
+        width:  { ideal: isMobile ? 640 : 1280 },
+        height: { ideal: isMobile ? 480 : 720 },
+        frameRate: { ideal: 30, max: 30 }
+      },
       audio: false
     });
     video.srcObject = stream;
@@ -86,21 +163,33 @@ async function initCamera() {
   }
 }
 
-// ── Keyboard shortcuts ───────────────────────────────
+// ── Keyboard shortcuts (desktop) ─────────────────────
 document.addEventListener('keydown', e => {
-  if (e.key === 's' || e.key === 'S') gameState.showSkeleton = !gameState.showSkeleton;
-  if (e.key === 'c' || e.key === 'C') {
-    gameState.chaosMode = !gameState.chaosMode;
-    if (gameState.chaosMode) { gameState.maxWindows = 20; gameState.spawnInterval = 30; }
-    else                     { gameState.maxWindows = 8;  gameState.spawnInterval = 120; }
-  }
+  if (e.key === 's' || e.key === 'S') toggleSkeleton();
+  if (e.key === 'c' || e.key === 'C') toggleChaos();
+  if (e.key === 'f' || e.key === 'F') isFullscreen() ? exitFullscreen() : enterFullscreen();
 });
+
+// ── Touch controls (mobile in-game) ──────────────────
+function toggleChaos() {
+  gameState.chaosMode = !gameState.chaosMode;
+  if (gameState.chaosMode) { gameState.maxWindows = 20; gameState.spawnInterval = 30; }
+  else                     { gameState.maxWindows = 8;  gameState.spawnInterval = 120; }
+  chaosBtn.classList.toggle('active', gameState.chaosMode);
+}
+
+function toggleSkeleton() {
+  gameState.showSkeleton = !gameState.showSkeleton;
+  skeletonBtn.classList.toggle('active', gameState.showSkeleton);
+}
+
+chaosBtn.addEventListener('click', toggleChaos);
+skeletonBtn.addEventListener('click', toggleSkeleton);
 
 // ── Window management ────────────────────────────────
 function manageWindows() {
   gameState.spawnTimer++;
 
-  // Logical canvas size for bounds checks
   const lw = window.innerWidth;
   const lh = window.innerHeight;
 
@@ -169,13 +258,11 @@ function gameLoop() {
       }
     }
 
-    // Miss — shatter the screen at the aim point
     if (!hitAny) {
       queueShatter(mirroredAim.x * lw, mirroredAim.y * lh);
     }
   }
 
-  // Physics — use logical dimensions
   for (const win of gameState.windows) updateWindowPhysics(win, lw, lh);
   updateParticles();
   updateShatter(lw, lh);
@@ -186,8 +273,19 @@ function gameLoop() {
 }
 
 // ── Start ────────────────────────────────────────────
-startBtn.addEventListener('click', () => {
+startBtn.addEventListener('click', async () => {
   startScreen.style.display = 'none';
+
+  // Show in-game UI
+  fullscreenBtn.style.display = 'flex';
+  if (isTouchDevice()) {
+    touchControls.style.display = 'flex';
+    skeletonBtn.classList.add('active');  // skeleton on by default
+  }
+
+  // Try to lock portrait on mobile
+  await tryLockOrientation();
+
   gameState.running    = true;
   gameState.windows    = [];
   gameState.shots      = 0;

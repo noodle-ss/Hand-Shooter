@@ -1,11 +1,15 @@
 /* ═══════════════════════════════════════════════════
-   Hand Canvas Shooter — Global Styles
+   Hand Canvas Shooter — Mobile-First Global Styles
    ═══════════════════════════════════════════════════ */
 
 *, *::before, *::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  /* Prevent callouts/selection on long-press (mobile) */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 :root {
@@ -18,53 +22,151 @@
   --color-dim:     #5a6380;
   --font-mono:     'JetBrains Mono', monospace;
   --font-sans:     'Inter', system-ui, sans-serif;
+
+  /* Safe area insets for notch / Dynamic Island / home bar */
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+
+  /* Scaling for HUD / UI — reduced on small phones */
+  --ui-scale: 1;
 }
 
+/* Smaller phones: scale down UI slightly */
+@media (max-width: 390px) { :root { --ui-scale: 0.82; } }
+@media (max-width: 320px) { :root { --ui-scale: 0.72; } }
+
 html, body {
-  width: 100%; height: 100%;
+  width: 100%;
+  height: 100%;
+  /* Use 100dvh so address bar collapse doesn't cause layout shift */
+  height: 100dvh;
   overflow: hidden;
   background: var(--color-bg);
   font-family: var(--font-sans);
   color: var(--color-text);
+  /* Prevent momentum scroll on iOS */
+  overscroll-behavior: none;
+  touch-action: none;
 }
 
 #game-canvas {
   display: block;
-  width: 100vw; height: 100vh;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Respect safe areas so canvas doesn't go under notch */
+  width: 100vw;
+  height: 100dvh;
   background: #000;
   cursor: none;
+  /* On touch devices we don't want the cursor changing */
+  touch-action: none;
 }
+
+/* ── Fullscreen Button ──────────────────────────── */
+#fullscreen-btn {
+  position: fixed;
+  /* Top-right, respecting the safe area */
+  top: calc(var(--sat) + 8px);
+  right: calc(var(--sar) + 8px);
+  z-index: 200;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(10, 10, 20, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  color: var(--color-accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  transition: background 0.15s, transform 0.1s;
+}
+#fullscreen-btn:active { transform: scale(0.9); background: rgba(0,240,255,0.15); }
+#fullscreen-btn svg { width: 18px; height: 18px; }
+
+/* ── In-game Touch Controls ─────────────────────── */
+#touch-controls {
+  position: fixed;
+  /* Bottom-left, above home bar */
+  bottom: calc(var(--sab) + 12px);
+  left: calc(var(--sal) + 12px);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.touch-ctrl-btn {
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(10, 10, 20, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.1s;
+  touch-action: manipulation;
+}
+.touch-ctrl-btn:active { transform: scale(0.88); background: rgba(99,102,241,0.25); }
+.touch-ctrl-btn.active { border-color: var(--color-fire); background: rgba(255,61,90,0.2); }
 
 /* ── Loading Overlay ────────────────────────────── */
 #loading-overlay {
-  position: fixed; inset: 0; z-index: 100;
-  display: flex; align-items: center; justify-content: center;
+  position: fixed;
+  inset: 0;
+  /* Respect safe areas */
+  padding: var(--sat) var(--sar) var(--sab) var(--sal);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: radial-gradient(ellipse at center, #121225 0%, #0a0a0f 70%);
 }
 
 .loader-content {
   text-align: center;
   animation: fadeIn 0.6s ease;
+  padding: 0 24px;
 }
 
 .loader-content h1 {
   font-family: var(--font-mono);
-  font-size: 2.4rem; font-weight: 700; letter-spacing: 0.1em;
+  font-size: calc(2rem * var(--ui-scale));
+  font-weight: 700;
+  letter-spacing: 0.1em;
   background: linear-gradient(135deg, var(--color-accent), #a78bfa, var(--color-fire));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
   background-clip: text;
   margin-bottom: 1.5rem;
 }
 
 .loader-content p {
   font-family: var(--font-mono);
-  font-size: 0.85rem; color: var(--color-dim); letter-spacing: 0.05em;
+  font-size: calc(0.8rem * var(--ui-scale));
+  color: var(--color-dim);
+  letter-spacing: 0.05em;
 }
 
 .loader-ring {
-  width: 64px; height: 64px;
-  margin: 0 auto 2rem;
-  border: 3px solid rgba(0,240,255,0.12);
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 1.5rem;
+  border: 3px solid rgba(0, 240, 255, 0.12);
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.9s linear infinite;
@@ -72,80 +174,142 @@ html, body {
 
 /* ── Start Screen ───────────────────────────────── */
 #start-screen {
-  position: fixed; inset: 0; z-index: 90;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(10,10,15,0.92);
+  position: fixed;
+  inset: 0;
+  /* Respect safe areas */
+  padding: calc(var(--sat) + 16px) calc(var(--sar) + 16px) calc(var(--sab) + 16px) calc(var(--sal) + 16px);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 15, 0.94);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  overflow-y: auto;
 }
 
 .start-content {
   text-align: center;
   animation: scaleIn 0.4s ease;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
 }
 
 .start-content h1 {
   font-family: var(--font-mono);
-  font-size: 3rem; font-weight: 700; letter-spacing: 0.12em;
+  /* Fluid type: big on desktop, fits on small phones */
+  font-size: clamp(1.6rem, 7vw, 3rem);
+  font-weight: 700;
+  letter-spacing: 0.1em;
   background: linear-gradient(135deg, var(--color-accent), #a78bfa, var(--color-fire));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
   background-clip: text;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.2;
 }
 
 .start-content > p {
-  font-size: 1rem; color: var(--color-dim); line-height: 1.7;
-  margin-bottom: 2rem;
+  font-size: clamp(0.82rem, 3vw, 1rem);
+  color: var(--color-dim);
+  line-height: 1.65;
+  margin-bottom: 1.5rem;
 }
 
 #start-btn {
   font-family: var(--font-mono);
-  font-size: 1rem; font-weight: 700; letter-spacing: 0.15em;
-  padding: 1rem 3rem; border: none; border-radius: 8px;
+  font-size: clamp(0.9rem, 4vw, 1rem);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  padding: 0.9rem 2.5rem;
+  border: none;
+  border-radius: 10px;
   background: linear-gradient(135deg, var(--color-accent), #6366f1);
-  color: #0a0a0f; cursor: pointer;
+  color: #0a0a0f;
+  cursor: pointer;
+  /* Large touch target */
+  min-width: 180px;
+  min-height: 52px;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
-  box-shadow: 0 0 30px rgba(0,240,255,0.25);
+  box-shadow: 0 0 28px rgba(0, 240, 255, 0.22);
+  touch-action: manipulation;
 }
 
-#start-btn:hover { transform: scale(1.06); box-shadow: 0 0 50px rgba(0,240,255,0.45); }
-#start-btn:active { transform: scale(0.97); }
+#start-btn:hover  { transform: scale(1.06); box-shadow: 0 0 46px rgba(0,240,255,0.42); }
+#start-btn:active { transform: scale(0.95); }
 
 .start-instructions {
-  display: flex; gap: 2.5rem; justify-content: center; margin-top: 2.5rem;
+  display: flex;
+  gap: clamp(1rem, 4vw, 2.5rem);
+  justify-content: center;
+  margin-top: 1.75rem;
+  flex-wrap: wrap;
 }
 
 .instruction-item {
-  display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 64px;
 }
 
 .instruction-icon {
-  font-size: 2rem;
-  display: flex; align-items: center; justify-content: center;
-  width: 56px; height: 56px; border-radius: 16px;
-  background: rgba(99,102,241,0.12);
-  border: 1px solid rgba(99,102,241,0.2);
+  font-size: clamp(1.4rem, 5vw, 2rem);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(44px, 12vw, 56px);
+  height: clamp(44px, 12vw, 56px);
+  border-radius: 14px;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.2);
 }
 
 .instruction-item span:last-child {
-  font-size: 0.8rem; color: var(--color-dim);
+  font-size: clamp(0.68rem, 2.5vw, 0.8rem);
+  color: var(--color-dim);
 }
 
 .start-tip {
-  margin-top: 1.5rem !important;
-  font-size: 0.75rem !important;
-  color: rgba(90,99,128,0.7) !important;
+  margin-top: 1.25rem !important;
+  font-size: clamp(0.68rem, 2.5vw, 0.75rem) !important;
+  color: rgba(90, 99, 128, 0.7) !important;
 }
 
 .start-tip kbd {
   font-family: var(--font-mono);
   font-size: 0.7rem;
-  padding: 1px 5px; border-radius: 4px;
-  background: rgba(99,102,241,0.15);
-  border: 1px solid rgba(99,102,241,0.3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
   color: #a78bfa;
+}
+
+/* Touch/desktop conditional visibility */
+.touch-only  { display: none; }
+.desktop-only { display: block; }
+
+@media (hover: none) and (pointer: coarse) {
+  /* Real touch device */
+  .touch-only   { display: block; }
+  .desktop-only { display: none; }
+  /* Hide text cursor everywhere */
+  * { cursor: none !important; }
 }
 
 /* ── Animations ─────────────────────────────────── */
 @keyframes spin    { to { transform: rotate(360deg); } }
-@keyframes fadeIn  { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
-@keyframes scaleIn { from { opacity:0; transform: scale(0.9); }       to { opacity:1; transform: scale(1); } }
+@keyframes fadeIn  { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes scaleIn { from { opacity: 0; transform: scale(0.92); }      to { opacity: 1; transform: scale(1); } }
+
+/* ── Fullscreen-mode tweaks ─────────────────────── */
+:fullscreen body,
+:-webkit-full-screen body,
+:-moz-full-screen body {
+  background: #000;
+}
+
+/* When in true fullscreen the safe-area insets become 0, which is correct */

@@ -2,9 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Critical for mobile: prevent scaling, enable safe areas for notch/home bar -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="description" content="Hand Canvas Shooter — bend your thumb to fire, shatter the screen!">
-  <title>🔫 Hand Canvas Shooter</title>
+  <!-- iOS PWA chrome-less mode -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0a0a0f">
+  <title>🔫 Hand Shooter</title>
   <link rel="stylesheet" href="assets/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,7 +18,21 @@
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
-  <video id="webcam" autoplay playsinline style="display:none;"></video>
+  <video id="webcam" autoplay playsinline muted style="display:none;"></video>
+
+  <!-- Fullscreen button — always visible in top-right corner during gameplay -->
+  <button id="fullscreen-btn" aria-label="Toggle fullscreen" style="display:none;">
+    <svg id="fs-icon-expand" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+      <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+    </svg>
+    <svg id="fs-icon-compress" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+      <polyline points="8 3 3 3 3 8"/><polyline points="21 8 21 3 16 3"/>
+      <line x1="3" y1="3" x2="10" y2="10"/><line x1="21" y1="3" x2="14" y2="10"/>
+      <polyline points="8 21 3 21 3 16"/><polyline points="16 21 21 21 21 16"/>
+      <line x1="3" y1="21" x2="10" y2="14"/><line x1="21" y1="21" x2="14" y2="14"/>
+    </svg>
+  </button>
 
   <!-- Loading overlay -->
   <div id="loading-overlay">
@@ -43,8 +63,17 @@
           <span>Bend thumb to fire!</span>
         </div>
       </div>
-      <p class="start-tip">Press <kbd>S</kbd> to toggle skeleton · <kbd>C</kbd> for chaos mode</p>
+      <!-- Keyboard tip only shown on non-touch devices -->
+      <p class="start-tip desktop-only">Press <kbd>S</kbd> to toggle skeleton · <kbd>C</kbd> for chaos mode</p>
+      <!-- Touch tip shown on touch devices -->
+      <p class="start-tip touch-only">Tap the ⚡ button in-game for chaos mode</p>
     </div>
+  </div>
+
+  <!-- In-game touch controls (shown only on touch devices during gameplay) -->
+  <div id="touch-controls" style="display:none;">
+    <button id="chaos-btn" class="touch-ctrl-btn" aria-label="Toggle chaos mode">⚡</button>
+    <button id="skeleton-btn" class="touch-ctrl-btn" aria-label="Toggle skeleton">🦴</button>
   </div>
 
   <script type="module" src="src/main.js"></script>

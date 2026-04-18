@@ -1,6 +1,17 @@
 // ═══════════════════════════════════════════════════
 // gesture.js — Thumb-bend detection + stable aim tracking
-// Enhanced: Kalman-style filter, velocity damping, at-camera stabilisation
+//
+// FIXES:
+//  1. Proper One-Euro Filter replaces ad-hoc EMA — eliminates jitter on slow
+//     moves while keeping fast intentional movements responsive.
+//  2. At-camera AIM FREEZE: when the finger is foreshortened (pointing at cam)
+//     the aim point is frozen in place instead of jittering wildly.
+//  3. Thumb debounce: thumb must be bent for BEND_CONFIRM_FRAMES consecutive
+//     frames before a FIRE event is emitted — kills false triggers.
+//  4. Post-fire release gate: after firing, thumb must fully release
+//     (below THUMB_BEND_OFF for RELEASE_FRAMES frames) before re-arming.
+//  5. Entry guard: after HAND_LOCK, thumb is not armed until it has been
+//     seen in a "released" state at least once — prevents firing on hand entry.
 // ═══════════════════════════════════════════════════
 
 import { LANDMARKS } from './hand-tracker.js';
@@ -11,288 +22,380 @@ export const GESTURE = {
   HAND_LOST:  'HAND_LOST'
 };
 
-// ── State ─────────────────────────────────────────
-let wasThumbBent      = false;
-let handLostFrames    = 0;
-const HAND_LOST_THRESHOLD = 30;
-let thumbBendSmoothed = 0;
-let wasHandDetected   = false;
+// ─── One-Euro Filter ──────────────────────────────
+// Reference: Casiez et al. 2012 — https://inria.hal.science/hal-00670496/document
+// Eliminates jitter on slow/noisy signals while keeping fast moves snappy.
 
-const THUMB_BEND_ON  = 0.40;
-const THUMB_BEND_OFF = 0.22;    // raised from 0.15 — easier to release
+class OneEuroFilter {
+  constructor({ minCutoff = 1.0, beta = 0.007, dCutoff = 1.0 } = {}) {
+    this.minCutoff = minCutoff;
+    this.beta      = beta;
+    this.dCutoff   = dCutoff;
+    this._x        = null;   // filtered signal
+    this._dx       = 0;      // filtered derivative
+    this._lastTime = null;
+  }
 
-// Anti-stuck: auto-reset bent state after MAX_BENT_FRAMES
-let thumbBentFrames   = 0;
-const MAX_BENT_FRAMES = 25;     // ~0.8s at 30 fps → auto-release
+  _alpha(cutoff, dt) {
+    const tau = 1 / (2 * Math.PI * cutoff);
+    return 1 / (1 + tau / dt);
+  }
 
-// Cooldown after each fire to prevent jitter re-fires
-let fireCooldown      = 0;
-const FIRE_COOLDOWN   = 18;     // ~0.6s at 30 fps
+  filter(x, timestamp) {
+    if (this._x === null) {
+      this._x  = x;
+      this._lastTime = timestamp;
+      return x;
+    }
 
-// ── Aim tracking state ────────────────────────────
-// Two-stage: raw buffer → EMA smooth → velocity-based prediction
-let smoothAimX = 0.5;
-let smoothAimY = 0.5;
-let aimVelX    = 0;
-let aimVelY    = 0;
-let lastAimPoint = null;
+    const dt = Math.max((timestamp - this._lastTime) / 1000, 0.001); // seconds
+    this._lastTime = timestamp;
 
-// Multi-frame buffer for median pre-filter (removes outlier spikes)
-const AIM_BUFFER_SIZE = 6;
-const aimBuffer = [];
+    // Derivative
+    const dx    = (x - this._x) / dt;
+    const aDx   = this._alpha(this.dCutoff, dt);
+    this._dx    = aDx * dx + (1 - aDx) * this._dx;
 
-// Dead-zone: ignore sub-threshold movements (noise floor)
-const AIM_DEADZONE = 0.003;
+    // Adaptive cutoff — rises with speed so fast moves get less lag
+    const cutoff = this.minCutoff + this.beta * Math.abs(this._dx);
+    const a      = this._alpha(cutoff, dt);
+    this._x      = a * x + (1 - a) * this._x;
 
-// Adaptive EMA factors
-const SMOOTH_NORMAL   = 0.28;   // responsive when not pointing at cam
-const SMOOTH_AT_CAM   = 0.82;   // very heavy smoothing when foreshortened
-const SMOOTH_FAST_MOV = 0.15;   // lighter smoothing on fast intentional moves
+    return this._x;
+  }
 
-// Velocity smoothing (prevents overshooting)
-const VEL_DECAY  = 0.75;
-const VEL_WEIGHT = 0.12;   // how much velocity prediction contributes
-
-// ── Thumb bend ────────────────────────────────────
-
-function angleBetween(a, b, c) {
-  const ab = { x: a.x - b.x, y: a.y - b.y };
-  const cb = { x: c.x - b.x, y: c.y - b.y };
-  const dot    = ab.x * cb.x + ab.y * cb.y;
-  const magAB  = Math.sqrt(ab.x * ab.x + ab.y * ab.y);
-  const magCB  = Math.sqrt(cb.x * cb.x + cb.y * cb.y);
-  if (magAB === 0 || magCB === 0) return 180;
-  return Math.acos(Math.max(-1, Math.min(1, dot / (magAB * magCB)))) * (180 / Math.PI);
+  reset() { this._x = null; this._dx = 0; this._lastTime = null; }
 }
 
-function getThumbBend(landmarks) {
-  const wrist    = landmarks[LANDMARKS.WRIST];
-  const cmc      = landmarks[LANDMARKS.THUMB_CMC];
-  const mcp      = landmarks[LANDMARKS.THUMB_MCP];
-  const ip       = landmarks[LANDMARKS.THUMB_IP];
-  const tip      = landmarks[LANDMARKS.THUMB_TIP];
-  const indexMCP = landmarks[LANDMARKS.INDEX_MCP];
+// ─── Aim filters ──────────────────────────────────
+// minCutoff=0.6 → smoother at rest; beta=0.004 → fast moves still pass through
+const filterX = new OneEuroFilter({ minCutoff: 0.6, beta: 0.004, dCutoff: 1.0 });
+const filterY = new OneEuroFilter({ minCutoff: 0.6, beta: 0.004, dCutoff: 1.0 });
 
-  const dx1 = tip.x - indexMCP.x;
-  const dy1 = tip.y - indexMCP.y;
-  const distToIndex = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+// At-camera hysteresis thresholds — enter at tighter threshold, exit at looser.
+// Prevents the detector from flickering rapidly on the boundary.
+const AT_CAM_ENTER_DIST = 0.055;  // must be this foreshortened to enter freeze
+const AT_CAM_EXIT_DIST  = 0.085;  // must open up this much to leave freeze
+const AT_CAM_ENTER_DZ   = -0.010;
+const AT_CAM_EXIT_DZ    = -0.005;
 
-  const thumbDrop = tip.y - cmc.y;
+// Blend-zone: frames over which we cross-fade from frozen→live after exiting
+const BLEND_FRAMES = 22;  // ~0.7s at 30fps — long enough to feel smooth
 
-  const angleMCP = angleBetween(cmc, mcp, ip);
-  const angleIP  = angleBetween(mcp, ip, tip);
+// ─── Thumb-bend state ─────────────────────────────
+const THUMB_BEND_ON  = 0.42;   // must exceed this to start arming
+const THUMB_BEND_OFF = 0.25;   // must drop below this to release
+
+// Debounce: thumb must be bent for this many consecutive frames to fire
+const BEND_CONFIRM_FRAMES = 6;   // ~200ms at 30fps — kills single-frame spikes
+
+// Release gate: must be released for this many frames before re-arming
+const RELEASE_FRAMES = 12;       // ~400ms — prevents re-fires after a shot
+
+// Cooldown after each fire (hard lockout regardless of release state)
+const FIRE_COOLDOWN   = 22;      // ~0.7s at 30fps
+
+const HAND_LOST_THRESHOLD = 30;  // frames before HAND_LOST event
+
+let thumbBendSmoothed = 0;
+let wasThumbBent      = false;
+let bendConfirmCount  = 0;       // consecutive bent frames
+let releaseCount      = 0;       // consecutive released frames
+let thumbArmed        = false;   // true only after at least one clean release
+let fireCooldown      = 0;
+let handLostFrames    = 0;
+let wasHandDetected   = false;
+let lastAimPoint      = null;
+let frozenAimPoint    = null;    // held when pointing at camera
+
+// Blend-zone state — used when transitioning OUT of at-camera mode
+let isAtCamera    = false;       // hysteresis state (not raw per-frame)
+let blendFrame    = 0;           // 0 = not blending; >0 counts up to BLEND_FRAMES
+let blendStartX   = 0;           // frozen position at blend start
+let blendStartY   = 0;
+
+// ─── Angle helper ─────────────────────────────────
+function angleBetween(a, b, c) {
+  const abx = a.x - b.x, aby = a.y - b.y;
+  const cbx = c.x - b.x, cby = c.y - b.y;
+  const dot  = abx * cbx + aby * cby;
+  const magA = Math.sqrt(abx * abx + aby * aby);
+  const magC = Math.sqrt(cbx * cbx + cby * cby);
+  if (magA === 0 || magC === 0) return 180;
+  return Math.acos(Math.max(-1, Math.min(1, dot / (magA * magC)))) * (180 / Math.PI);
+}
+
+// ─── Thumb bend score (0..1) ──────────────────────
+function getThumbBend(lm) {
+  const tip      = lm[LANDMARKS.THUMB_TIP];
+  const ip       = lm[LANDMARKS.THUMB_IP];
+  const mcp      = lm[LANDMARKS.THUMB_MCP];
+  const cmc      = lm[LANDMARKS.THUMB_CMC];
+  const indexMCP = lm[LANDMARKS.INDEX_MCP];
+
+  // Method 1: joint angles
+  const angleMCP  = angleBetween(cmc, mcp, ip);
+  const angleIP   = angleBetween(mcp, ip, tip);
   const angleBend = Math.max(0, Math.min(1, (180 - (angleMCP + angleIP) / 2) / 100));
 
-  const proximityBend = Math.max(0, Math.min(1, (0.15 - distToIndex) / 0.10));
-  const dropBend      = Math.max(0, Math.min(1, thumbDrop * 8));
+  // Method 2: tip proximity to index MCP
+  const dx1 = tip.x - indexMCP.x;
+  const dy1 = tip.y - indexMCP.y;
+  const proximityBend = Math.max(0, Math.min(1, (0.15 - Math.sqrt(dx1 * dx1 + dy1 * dy1)) / 0.10));
+
+  // Method 3: tip drop below CMC (downward curl)
+  const dropBend = Math.max(0, Math.min(1, (tip.y - cmc.y) * 8));
 
   return Math.max(angleBend, proximityBend, dropBend);
 }
 
-// ── Aim point ─────────────────────────────────────
+// ─── Raw projected aim (no filtering) ────────────
+function computeRawAim(lm) {
+  const indexMCP = lm[LANDMARKS.INDEX_MCP];
+  const indexPIP = lm[LANDMARKS.INDEX_PIP];
+  const indexDIP = lm[LANDMARKS.INDEX_DIP];
+  const indexTip = lm[LANDMARKS.INDEX_TIP];
 
-/**
- * Median of an array of numbers — removes outlier spikes from buffer
- */
-function median(arr) {
-  const s = [...arr].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  const dx2d   = indexTip.x - indexMCP.x;
+  const dy2d   = indexTip.y - indexMCP.y;
+  const dist2d = Math.sqrt(dx2d * dx2d + dy2d * dy2d);
+  const dz     = (indexTip.z || 0) - (indexMCP.z || 0);
+
+  const dx1 = indexDIP.x - indexPIP.x;
+  const dy1 = indexDIP.y - indexPIP.y;
+  const dx2 = indexTip.x - indexDIP.x;
+  const dy2 = indexTip.y - indexDIP.y;
+  const avgDx = dx1 * 0.35 + dx2 * 0.65;
+  const avgDy = dy1 * 0.35 + dy2 * 0.65;
+
+  const projectDist = Math.max(0.12, dist2d * 2.2);
+  const mag = Math.sqrt(avgDx * avgDx + avgDy * avgDy);
+  let rawX, rawY;
+  if (mag > 0.001) {
+    rawX = indexTip.x + (avgDx / mag) * projectDist;
+    rawY = indexTip.y + (avgDy / mag) * projectDist;
+  } else {
+    rawX = indexTip.x;
+    rawY = indexTip.y;
+  }
+
+  return {
+    rawX:   Math.max(0, Math.min(1, rawX)),
+    rawY:   Math.max(0, Math.min(1, rawY)),
+    dist2d,
+    dz
+  };
 }
 
-export function getAimPoint(landmarks) {
-  const indexMCP = landmarks[LANDMARKS.INDEX_MCP];
-  const indexPIP = landmarks[LANDMARKS.INDEX_PIP];
-  const indexDIP = landmarks[LANDMARKS.INDEX_DIP];
-  const indexTip = landmarks[LANDMARKS.INDEX_TIP];
+// ─── Aim point with hysteresis + blend-zone ───────
+//
+// State machine:
+//   NORMAL  → FROZEN   when dist2d < AT_CAM_ENTER_DIST && dz < AT_CAM_ENTER_DZ
+//   FROZEN  → BLENDING when dist2d > AT_CAM_EXIT_DIST  || dz > AT_CAM_EXIT_DZ
+//   BLENDING→ NORMAL   after BLEND_FRAMES frames
+//
+// During BLENDING the output is a smooth lerp between the frozen point and the
+// live One-Euro output.  The filter is pre-seeded at the frozen position the
+// moment blending starts, so it has no large initial error to "snap" from.
+export function getAimPoint(lm) {
+  const now = performance.now();
+  const { rawX, rawY, dist2d, dz } = computeRawAim(lm);
 
-  // 2D projection length of the index finger
-  const dx2d = indexTip.x - indexMCP.x;
-  const dy2d = indexTip.y - indexMCP.y;
-  const dist2d = Math.sqrt(dx2d * dx2d + dy2d * dy2d);
-
-  // Z-depth: negative = tip closer to camera
-  const dz = (indexTip.z || 0) - (indexMCP.z || 0);
-
-  // Foreshortening threshold — finger appears short when pointing at camera
-  const isPointingAtCamera = dist2d < 0.07 && dz < -0.015;
-
-  let rawX, rawY;
-
-  if (isPointingAtCamera) {
-    // Pointing at camera: use tip position directly
-    // But also average nearby tip positions from PIP for extra stability
-    rawX = indexTip.x * 0.6 + indexPIP.x * 0.4;
-    rawY = indexTip.y * 0.6 + indexPIP.y * 0.4;
+  // ── Hysteresis: decide whether we are "at camera" ──
+  if (!isAtCamera) {
+    // Enter freeze only when firmly foreshortened
+    if (dist2d < AT_CAM_ENTER_DIST && dz < AT_CAM_ENTER_DZ) {
+      isAtCamera = true;
+      // Snapshot the current filtered position as the freeze point
+      frozenAimPoint = {
+        x: filterX._x ?? rawX,
+        y: filterY._x ?? rawY
+      };
+    }
   } else {
-    // Normal pointing: project finger direction forward
-    const dx1 = indexDIP.x - indexPIP.x;
-    const dy1 = indexDIP.y - indexPIP.y;
-    const dx2 = indexTip.x - indexDIP.x;
-    const dy2 = indexTip.y - indexDIP.y;
-    const avgDx = dx1 * 0.4 + dx2 * 0.6;   // weight toward tip segment
-    const avgDy = dy1 * 0.4 + dy2 * 0.6;
-
-    const projectDist = Math.max(0.12, dist2d * 2.2);
-    const mag = Math.sqrt(avgDx * avgDx + avgDy * avgDy);
-    if (mag > 0.001) {
-      rawX = indexTip.x + (avgDx / mag) * projectDist;
-      rawY = indexTip.y + (avgDy / mag) * projectDist;
-    } else {
-      rawX = indexTip.x;
-      rawY = indexTip.y;
+    // Exit freeze only when finger has clearly turned away (hysteresis gap)
+    if (dist2d > AT_CAM_EXIT_DIST || dz > AT_CAM_EXIT_DZ) {
+      isAtCamera = false;
+      // Start blend from frozen position
+      blendFrame  = 1;
+      blendStartX = frozenAimPoint ? frozenAimPoint.x : rawX;
+      blendStartY = frozenAimPoint ? frozenAimPoint.y : rawY;
+      // Pre-seed the One-Euro filter at the frozen position so it has no
+      // sudden "jump" to the current raw landmark position.
+      filterX._x        = blendStartX;
+      filterX._lastTime = now;
+      filterY._x        = blendStartY;
+      filterY._lastTime = now;
+      frozenAimPoint = null;
     }
   }
 
-  rawX = Math.max(0, Math.min(1, rawX));
-  rawY = Math.max(0, Math.min(1, rawY));
-
-  // Stage 1: Multi-frame buffer for median pre-filter
-  aimBuffer.push({ x: rawX, y: rawY });
-  if (aimBuffer.length > AIM_BUFFER_SIZE) aimBuffer.shift();
-
-  // Use median to kill outlier spikes from tracking noise
-  const bufX = median(aimBuffer.map(b => b.x));
-  const bufY = median(aimBuffer.map(b => b.y));
-
-  // Stage 2: Dead-zone — ignore micro-jitter
-  const dxAim = bufX - smoothAimX;
-  const dyAim = bufY - smoothAimY;
-  const moveDist = Math.sqrt(dxAim * dxAim + dyAim * dyAim);
-
-  if (moveDist < AIM_DEADZONE) {
-    return { aimPoint: { x: smoothAimX, y: smoothAimY }, isPointingAtCamera };
+  // ── FROZEN state ──────────────────────────────────
+  if (isAtCamera) {
+    return { aimPoint: frozenAimPoint, isPointingAtCamera: true };
   }
 
-  // Stage 3: Adaptive EMA
-  // Fast movement = lighter smoothing (intentional), slow = heavier (likely jitter)
-  let smoothFactor;
-  if (isPointingAtCamera) {
-    smoothFactor = SMOOTH_AT_CAM;
-  } else if (moveDist > 0.04) {
-    smoothFactor = SMOOTH_FAST_MOV;  // intentional fast move
-  } else {
-    smoothFactor = SMOOTH_NORMAL;
+  // ── Run the One-Euro filter on the live aim ───────
+  const filtX = filterX.filter(rawX, now);
+  const filtY = filterY.filter(rawY, now);
+
+  // ── BLENDING state: cross-fade frozen→live ────────
+  if (blendFrame > 0 && blendFrame <= BLEND_FRAMES) {
+    // Ease-in-out curve so the crosshair eases in rather than linearly sliding
+    const t   = blendFrame / BLEND_FRAMES;
+    const ease = t * t * (3 - 2 * t);   // smoothstep
+    const outX = blendStartX + (filtX - blendStartX) * ease;
+    const outY = blendStartY + (filtY - blendStartY) * ease;
+    blendFrame++;
+    return { aimPoint: { x: outX, y: outY }, isPointingAtCamera: false };
   }
 
-  // Stage 4: Velocity-assisted prediction
-  // Damp the velocity first, then blend in new velocity
-  aimVelX = aimVelX * VEL_DECAY + (bufX - smoothAimX) * (1 - VEL_DECAY);
-  aimVelY = aimVelY * VEL_DECAY + (bufY - smoothAimY) * (1 - VEL_DECAY);
-
-  // Predicted target (ahead of current position by one frame)
-  const predX = bufX + aimVelX * VEL_WEIGHT;
-  const predY = bufY + aimVelY * VEL_WEIGHT;
-
-  smoothAimX = smoothAimX * smoothFactor + predX * (1 - smoothFactor);
-  smoothAimY = smoothAimY * smoothFactor + predY * (1 - smoothFactor);
-
-  // Clamp final
-  smoothAimX = Math.max(0, Math.min(1, smoothAimX));
-  smoothAimY = Math.max(0, Math.min(1, smoothAimY));
-
-  return { aimPoint: { x: smoothAimX, y: smoothAimY }, isPointingAtCamera };
+  blendFrame = 0;
+  return { aimPoint: { x: filtX, y: filtY }, isPointingAtCamera: false };
 }
 
-// ── Main gesture processor ─────────────────────────
-
+// ─── Main gesture processor ───────────────────────
 export function processGesture(detected, landmarks) {
   if (!detected || !landmarks) {
     handLostFrames++;
 
     if (handLostFrames < HAND_LOST_THRESHOLD) {
+      // Grace period — return last known state so we don't flicker
       return {
         event:           null,
         handDetected:    wasHandDetected,
         thumbBent:       wasThumbBent,
         thumbBendAmount: thumbBendSmoothed,
-        aimPoint:        lastAimPoint
+        aimPoint:        lastAimPoint,
+        isPointingAtCamera: false
       };
     }
 
     if (handLostFrames === HAND_LOST_THRESHOLD && wasHandDetected) {
       wasHandDetected   = false;
       wasThumbBent      = false;
-      thumbBendSmoothed *= 0.8;
-      aimVelX = 0;
-      aimVelY = 0;
+      thumbArmed        = false;
+      bendConfirmCount  = 0;
+      releaseCount      = 0;
+      thumbBendSmoothed = 0;
       return {
         event:           GESTURE.HAND_LOST,
         handDetected:    false,
         thumbBent:       false,
-        thumbBendAmount: thumbBendSmoothed,
-        aimPoint:        null
+        thumbBendAmount: 0,
+        aimPoint:        null,
+        isPointingAtCamera: false
       };
     }
 
-    thumbBendSmoothed *= 0.95;
+    thumbBendSmoothed *= 0.9;
     return {
       event:           null,
       handDetected:    false,
       thumbBent:       false,
       thumbBendAmount: thumbBendSmoothed,
-      aimPoint:        null
+      aimPoint:        null,
+      isPointingAtCamera: false
     };
   }
 
+  // ── Hand present ──────────────────────────────────
   const wasLost = !wasHandDetected;
   handLostFrames = 0;
 
-  const bendRaw = getThumbBend(landmarks);
-  thumbBendSmoothed = thumbBendSmoothed * 0.55 + bendRaw * 0.45;   // slightly less sticky
+  // Smooth the raw bend value
+  const bendRaw     = getThumbBend(landmarks);
+  thumbBendSmoothed = thumbBendSmoothed * 0.50 + bendRaw * 0.50;
 
   // Tick cooldown
   if (fireCooldown > 0) fireCooldown--;
 
-  let isThumbBent = wasThumbBent
-    ? thumbBendSmoothed > THUMB_BEND_OFF
-    : thumbBendSmoothed > THUMB_BEND_ON;
+  // ── Entry guard: arm only after first clean release ──
+  // When the hand first appears (wasLost), require the thumb to be seen
+  // in a released state before we allow firing. This prevents the
+  // "fire on entry" bug where the thumb is already bent on detection.
+  if (wasLost) {
+    thumbArmed       = false;   // disarm on every new hand detection
+    bendConfirmCount = 0;
+    releaseCount     = 0;
+    wasHandDetected  = true;
+  }
 
-  // Anti-stuck: if bent for too long, force release so user can re-fire
-  if (isThumbBent) {
-    thumbBentFrames++;
-    if (thumbBentFrames >= MAX_BENT_FRAMES) {
-      isThumbBent     = false;
-      thumbBentFrames = 0;
+  // Track release state to arm the trigger
+  if (thumbBendSmoothed < THUMB_BEND_OFF) {
+    releaseCount++;
+    bendConfirmCount = 0;
+    if (releaseCount >= RELEASE_FRAMES) {
+      thumbArmed = true;   // thumb seen cleanly released → now armed
     }
   } else {
-    thumbBentFrames = 0;
+    releaseCount = 0;
   }
 
-  const { aimPoint } = getAimPoint(landmarks);
+  // ── Debounced bend detection ───────────────────────
+  let isThumbBent = wasThumbBent;
+
+  if (!wasThumbBent) {
+    // Rising edge: count consecutive bent frames
+    if (thumbBendSmoothed > THUMB_BEND_ON) {
+      bendConfirmCount++;
+      if (bendConfirmCount >= BEND_CONFIRM_FRAMES) {
+        isThumbBent = true;
+      }
+    } else {
+      bendConfirmCount = 0;
+    }
+  } else {
+    // Falling edge: hysteresis
+    if (thumbBendSmoothed < THUMB_BEND_OFF) {
+      isThumbBent      = false;
+      bendConfirmCount = 0;
+    }
+  }
+
+  // ── Aim point ────────────────────────────────────
+  const { aimPoint, isPointingAtCamera } = getAimPoint(landmarks);
   if (aimPoint) lastAimPoint = aimPoint;
 
+  // ── Event ────────────────────────────────────────
   let event = null;
+
   if (wasLost) {
     event = GESTURE.HAND_LOCK;
-  } else if (isThumbBent && !wasThumbBent && fireCooldown <= 0) {
-    event = GESTURE.THUMB_FIRE;
-    fireCooldown = FIRE_COOLDOWN;   // start cooldown after fire
+  } else if (isThumbBent && !wasThumbBent && thumbArmed && fireCooldown <= 0) {
+    event        = GESTURE.THUMB_FIRE;
+    fireCooldown = FIRE_COOLDOWN;
+    thumbArmed   = false;  // disarm until next clean release
   }
 
-  wasThumbBent    = isThumbBent;
-  wasHandDetected = true;
+  wasThumbBent = isThumbBent;
 
   return {
     event,
     handDetected:    true,
     thumbBent:       isThumbBent,
     thumbBendAmount: thumbBendSmoothed,
-    aimPoint
+    aimPoint,
+    isPointingAtCamera
   };
 }
 
+// ─── Reset all state ──────────────────────────────
 export function resetGesture() {
   wasThumbBent      = false;
   handLostFrames    = 0;
   thumbBendSmoothed = 0;
   wasHandDetected   = false;
-  thumbBentFrames   = 0;
+  thumbArmed        = false;
+  bendConfirmCount  = 0;
+  releaseCount      = 0;
   fireCooldown      = 0;
-  smoothAimX        = 0.5;
-  smoothAimY        = 0.5;
-  aimVelX           = 0;
-  aimVelY           = 0;
   lastAimPoint      = null;
-  aimBuffer.length  = 0;
+  frozenAimPoint    = null;
+  isAtCamera        = false;
+  blendFrame        = 0;
+  blendStartX       = 0;
+  blendStartY       = 0;
+  filterX.reset();
+  filterY.reset();
 }
